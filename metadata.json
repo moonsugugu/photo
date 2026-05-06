@@ -1,0 +1,10 @@
+{
+  "name": "업데이트 찰칵포토부스",
+  "description": "어린이들을 위한 친근한 디자인의 AI 스티커 사진기. 어린이날, 어버이날 등 다양한 테마 배경과 3/4컷 프레임 기능을 제공합니다.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "camera"
+  ]
+}
