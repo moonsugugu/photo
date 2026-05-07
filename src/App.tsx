@@ -103,7 +103,7 @@ export default function App() {
   const retakingIndexRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const allShotFramesRef = useRef<HTMLCanvasElement[][]>([]);
+  const allShotFramesRef = useRef<HTMLImageElement[][]>([]);
   const customBgImageRef = useRef<HTMLImageElement | null>(null);
   const videoExtRef = useRef<string>('mp4');
 
@@ -217,7 +217,7 @@ export default function App() {
         segmentationRef.current = await ImageSegmenter.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
-            delegate: "GPU"
+            delegate: "CPU"
           },
           runningMode: "VIDEO",
           outputCategoryMask: false,
@@ -287,8 +287,16 @@ export default function App() {
   }, [startCamera, isAuthenticated]);
 
   const frameRef = useRef<number>();
+  const lastProcessTimeRef = useRef<number>(0);
 
   const processFrame = useCallback(async () => {
+    const now = performance.now();
+    if (now - lastProcessTimeRef.current < 1000 / 30) {
+        frameRef.current = requestAnimationFrame(processFrame);
+        return;
+    }
+    lastProcessTimeRef.current = now;
+
     if (videoRef.current && isCameraReady) {
        if (segmentationRef.current && removeBackgroundRef.current) {
            try {
@@ -955,11 +963,26 @@ export default function App() {
     ctx.restore();
   };
 
+  const getSharedAudioContext = (() => {
+    let audioCtx: AudioContext | null = null;
+    return () => {
+      if (!audioCtx) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          audioCtx = new AudioContextClass();
+        }
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      return audioCtx;
+    };
+  })();
+
   const playCountdownSound = () => {
     try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) return;
-      const ctx = new AudioContext();
+      const ctx = getSharedAudioContext();
+      if (!ctx) return;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
@@ -976,9 +999,8 @@ export default function App() {
 
   const playShutterSound = () => {
     try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) return;
-      const ctx = new AudioContext();
+      const ctx = getSharedAudioContext();
+      if (!ctx) return;
       
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -1126,23 +1148,33 @@ export default function App() {
 
     const numShots = frameMode === '1-cut' ? 1 : frameMode === '3-cut' ? 3 : 4;
     const capturedShots: Shot[] = [];
+    
+    // Shared canvas to prevent memory leak and freeze on mobile
+    const captureTempCanvas = document.createElement('canvas');
+    captureTempCanvas.width = 200;
+    captureTempCanvas.height = 150;
+    const captureTempCtx = captureTempCanvas.getContext('2d', { willReadFrequently: true });
 
     for (let i = 0; i < numShots; i++) {
-      const shotFrames: HTMLCanvasElement[] = [];
+      const shotFrames: any[] = [];
       const captureInterval = setInterval(() => {
           const v = videoRef.current;
           const seg = segmentedCanvasRef.current;
           const src = (seg && seg.width > 0) ? seg : v;
-          if (src) {
-              const c = document.createElement('canvas');
-              c.width = 400;
-              c.height = 300;
-              const ctx = c.getContext('2d');
-              if (ctx) {
-                  ctx.translate(c.width, 0);
-                  ctx.scale(-1, 1);
-                  ctx.drawImage(src as CanvasImageSource, 0, 0, c.width, c.height);
-                  shotFrames.push(c);
+          if (src && captureTempCtx) {
+              captureTempCtx.save();
+              captureTempCtx.translate(captureTempCanvas.width, 0);
+              captureTempCtx.scale(-1, 1);
+              captureTempCtx.drawImage(src as CanvasImageSource, 0, 0, captureTempCanvas.width, captureTempCanvas.height);
+              captureTempCtx.restore();
+              
+              const copyCanvas = document.createElement('canvas');
+              copyCanvas.width = captureTempCanvas.width;
+              copyCanvas.height = captureTempCanvas.height;
+              const copyCtx = copyCanvas.getContext('2d');
+              if (copyCtx) {
+                   copyCtx.drawImage(captureTempCanvas, 0, 0);
+                   shotFrames.push(copyCanvas);
               }
           }
       }, 1000 / 15);
@@ -1156,7 +1188,7 @@ export default function App() {
       setCountdown(0); // Flash
       playShutterSound();
       clearInterval(captureInterval);
-      allShotFramesRef.current.push(shotFrames);
+      allShotFramesRef.current.push(shotFrames as any);
       
       await new Promise((r) => setTimeout(r, 100)); // Flash delay
 
@@ -1179,12 +1211,13 @@ export default function App() {
             }
             tempCtx.drawImage(sourceImage as CanvasImageSource, 0, 0, temp.width, temp.height);
             
-            const dataUrl = temp.toDataURL('image/png');
+            const dataUrl = temp.toDataURL('image/jpeg', 0.85);
             const imageObj = new Image();
             imageObj.src = dataUrl;
             
             await new Promise((resolve) => {
                imageObj.onload = resolve;
+               imageObj.onerror = resolve;
             });
 
             capturedShots.push({ dataUrl, timestamp: Date.now(), imageObj });
@@ -1205,21 +1238,30 @@ export default function App() {
     setIsTakingShots(true);
     setRetakingIndex(indexToReplace);
     
-    const shotFrames: HTMLCanvasElement[] = [];
+    const captureTempCanvas = document.createElement('canvas');
+    captureTempCanvas.width = 200;
+    captureTempCanvas.height = 150;
+    const captureTempCtx = captureTempCanvas.getContext('2d', { willReadFrequently: true });
+
+    const shotFrames: any[] = [];
     const captureInterval = setInterval(() => {
         const v = videoRef.current;
         const seg = segmentedCanvasRef.current;
         const src = (seg && seg.width > 0) ? seg : v;
-        if (src) {
-            const c = document.createElement('canvas');
-            c.width = 400;
-            c.height = 300;
-            const ctx = c.getContext('2d');
-            if (ctx) {
-                ctx.translate(c.width, 0);
-                ctx.scale(-1, 1);
-                ctx.drawImage(src as CanvasImageSource, 0, 0, c.width, c.height);
-                shotFrames.push(c);
+        if (src && captureTempCtx) {
+            captureTempCtx.save();
+            captureTempCtx.translate(captureTempCanvas.width, 0);
+            captureTempCtx.scale(-1, 1);
+            captureTempCtx.drawImage(src as CanvasImageSource, 0, 0, captureTempCanvas.width, captureTempCanvas.height);
+            captureTempCtx.restore();
+            
+            const copyCanvas = document.createElement('canvas');
+            copyCanvas.width = captureTempCanvas.width;
+            copyCanvas.height = captureTempCanvas.height;
+            const copyCtx = copyCanvas.getContext('2d');
+            if (copyCtx) {
+                 copyCtx.drawImage(captureTempCanvas, 0, 0);
+                 shotFrames.push(copyCanvas);
             }
         }
     }, 1000 / 15);
@@ -1235,7 +1277,7 @@ export default function App() {
     clearInterval(captureInterval);
     
     if (allShotFramesRef.current) {
-        allShotFramesRef.current[indexToReplace] = shotFrames;
+        allShotFramesRef.current[indexToReplace] = shotFrames as any;
     }
     
     await new Promise((r) => setTimeout(r, 100)); // Flash delay
@@ -1258,12 +1300,13 @@ export default function App() {
           }
           tempCtx.drawImage(sourceImage as CanvasImageSource, 0, 0, temp.width, temp.height);
           
-          const dataUrl = temp.toDataURL('image/png');
+          const dataUrl = temp.toDataURL('image/jpeg', 0.85);
           const imageObj = new Image();
           imageObj.src = dataUrl;
           
           await new Promise((resolve) => {
              imageObj.onload = resolve;
+             imageObj.onerror = resolve;
           });
 
           setShots(prev => {
