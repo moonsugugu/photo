@@ -12,6 +12,32 @@ import confetti from 'canvas-confetti';
 import { THEMES, STICKER_CATEGORIES, FRAME_DESIGNS } from './constants';
 import { Theme, FrameMode, Sticker, Shot, FrameDesign } from './types';
 
+// --- Suppress MediaPipe/TFLite WASM Logs globally ---
+const originalLog = console.log;
+const originalInfo = console.info;
+const originalWarn = console.warn;
+const originalError = console.error;
+const originalDebug = console.debug;
+
+const suppressTFLite = (...args: any[]) => {
+    const text = args.map(a => {
+        try {
+            return typeof a === 'string' ? a : JSON.stringify(a);
+        } catch(e) {
+            return String(a);
+        }
+    }).join(' ');
+    if (text.includes('TensorFlow Lite') || text.includes('XNNPACK')) return true;
+    return false;
+};
+
+console.log = (...args) => { if (!suppressTFLite(...args)) originalLog(...args); };
+console.info = (...args) => { if (!suppressTFLite(...args)) originalInfo(...args); };
+console.warn = (...args) => { if (!suppressTFLite(...args)) originalWarn(...args); };
+console.error = (...args) => { if (!suppressTFLite(...args)) originalError(...args); };
+console.debug = (...args) => { if (!suppressTFLite(...args)) originalDebug(...args); };
+// ----------------------------------------------------
+
 const imageCache = new Map<string, HTMLImageElement>();
 
 const traceShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, w: number, h: number) => {
@@ -219,11 +245,6 @@ export default function App() {
   useEffect(() => {
     const initSegmenter = async () => {
       try {
-        const originalInfo = console.info;
-        console.info = (...args) => {
-            if (args[0] && typeof args[0] === 'string' && args[0].includes('TensorFlow Lite XNNPACK delegate')) return;
-            originalInfo(...args);
-        };
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
@@ -236,7 +257,6 @@ export default function App() {
           outputCategoryMask: false,
           outputConfidenceMasks: true,
         });
-        console.info = originalInfo;
       } catch (e) {
         console.error("Failed to initialize MediaPipe Image Segmenter:", e);
       }
