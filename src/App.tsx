@@ -113,6 +113,7 @@ export default function App() {
   const [passwordError, setPasswordError] = useState(false);
   
   const isAndroid = typeof window !== 'undefined' && /Android/i.test(navigator.userAgent);
+  const isMobile = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   const defaultFacingMode = isAndroid ? 'environment' : 'user';
 
   const [isCameraReady, setIsCameraReady] = useState(false);
@@ -149,7 +150,7 @@ export default function App() {
   const [cameraSepia, setCameraSepia] = useState(0);
   const [cameraGrayscale, setCameraGrayscale] = useState(0);
   const [cameraInvert, setCameraInvert] = useState(0);
-  const [removeBackground, setRemoveBackground] = useState(true);
+  const [removeBackground, setRemoveBackground] = useState(!isMobile);
 
   const canvasDimRef = useRef({ w: 600, h: 600 });
   const topTextRef = useRef('');
@@ -158,7 +159,7 @@ export default function App() {
   const isTextBoldRef = useRef(false);
   const textColorRef = useRef('#000000');
   const cameraFilterRef = useRef('none');
-  const removeBackgroundRef = useRef(true);
+  const removeBackgroundRef = useRef(!isMobile);
 
   useEffect(() => {
     switch (frameMode) {
@@ -241,6 +242,15 @@ export default function App() {
         throw new Error('이 브라우저/환경에서는 카메라를 지원하지 않거나 안전한 연결(HTTPS)이 아닙니다.');
       }
       
+      // Stop any existing tracks FIRST. Some Android devices fail if the camera is already open.
+      if (videoRef.current && videoRef.current.srcObject) {
+        const oldStream = videoRef.current.srcObject as MediaStream;
+        oldStream.getTracks().forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+        // Wait a tiny bit for hardware to free up
+        await new Promise(r => setTimeout(r, 100));
+      }
+
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -255,11 +265,6 @@ export default function App() {
       }
 
       if (videoRef.current) {
-        // Stop any existing tracks
-        if (videoRef.current.srcObject) {
-          const oldStream = videoRef.current.srcObject as MediaStream;
-          oldStream.getTracks().forEach(track => track.stop());
-        }
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = async () => {
           setIsCameraReady(true);
