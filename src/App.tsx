@@ -4,7 +4,7 @@
  */
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Camera, Download, RefreshCw, Star, Heart, Users, Sparkles, Smile, Trash2, Layout, Image as ImageIcon, Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Camera, Download, RefreshCw, Star, Heart, Users, Sparkles, Smile, Trash2, Layout, Image as ImageIcon, Check, ChevronLeft, ChevronRight, SwitchCamera } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
 
@@ -114,6 +114,8 @@ export default function App() {
   
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const facingModeRef = useRef<'user' | 'environment'>('user');
   const [activeTheme, setActiveTheme] = useState<Theme>(THEMES[0]);
   const [activeFrameDesign, setActiveFrameDesign] = useState<FrameDesign>(FRAME_DESIGNS[0]);
   const [frameMode, setFrameMode] = useState<FrameMode>('4-cut');
@@ -236,7 +238,7 @@ export default function App() {
         throw new Error('이 브라우저/환경에서는 카메라를 지원하지 않거나 안전한 연결(HTTPS)이 아닙니다.');
       }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' },
+        video: { width: 640, height: 480, facingMode: facingModeRef.current },
         audio: false,
       });
       if (videoRef.current) {
@@ -1316,6 +1318,13 @@ export default function App() {
     setStickers(stickers.map(s => s.id === selectedStickerId ? { ...s, ...updates } : s));
   };
 
+  const handleSwitchCamera = () => {
+    const nextMode = facingModeRef.current === 'user' ? 'environment' : 'user';
+    facingModeRef.current = nextMode;
+    setFacingMode(nextMode);
+    startCamera();
+  };
+
   const handleDownload = () => {
     if (!finalImage) return;
     const link = document.createElement('a');
@@ -1729,19 +1738,34 @@ export default function App() {
                 }
                 
                 return (
-                  <button
-                    onClick={handleStartCapture}
-                    disabled={isTakingShots || !isCameraReady}
-                    className={`
-                      w-full py-4 rounded-2xl font-black text-xl flex items-center justify-center gap-3 transition-all
-                      ${isTakingShots || !isCameraReady
-                        ? 'bg-gray-200 text-gray-400 border-4 border-gray-300' 
-                        : 'bg-[#FF6B6B] text-white neo-border shadow-[0_6px_0_0_#333] active:translate-y-1 active:shadow-none'}
-                    `}
-                  >
-                    <Camera className="w-6 h-6" />
-                    <span>{isTakingShots ? '촬영 중...' : '촬영 시작!'}</span>
-                  </button>
+                  <div className="flex gap-4">
+                    <button
+                      onClick={handleStartCapture}
+                      disabled={isTakingShots || !isCameraReady}
+                      className={`
+                        flex-1 py-4 rounded-2xl font-black text-xl flex items-center justify-center gap-3 transition-all
+                        ${isTakingShots || !isCameraReady
+                          ? 'bg-gray-200 text-gray-400 border-4 border-gray-300' 
+                          : 'bg-[#FF6B6B] text-white neo-border shadow-[0_6px_0_0_#333] active:translate-y-1 active:shadow-none'}
+                      `}
+                    >
+                      <Camera className="w-6 h-6" />
+                      <span>{isTakingShots ? '촬영 중...' : '촬영 시작!'}</span>
+                    </button>
+                    <button 
+                      onClick={handleSwitchCamera}
+                      disabled={isTakingShots || !isCameraReady}
+                      className={`
+                        p-4 rounded-2xl font-black text-xl flex items-center justify-center transition-all bg-white text-[#333]
+                        ${isTakingShots || !isCameraReady
+                          ? 'opacity-50 cursor-not-allowed border-4 border-gray-300 text-gray-400'
+                          : 'neo-border shadow-[0_6px_0_0_#333] active:translate-y-1 active:shadow-none hover:bg-gray-50'}
+                      `}
+                      title="카메라 전환"
+                    >
+                      <SwitchCamera className="w-6 h-6" />
+                    </button>
+                  </div>
                 );
               })()}
             </div>
