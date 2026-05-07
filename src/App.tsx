@@ -1716,10 +1716,10 @@ export default function App() {
             className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-4 lg:p-8"
           >
              <div className="relative w-full max-w-5xl aspect-video bg-black rounded-3xl overflow-hidden neo-border">
-                 <canvas
-                    ref={fullscreenCanvasRef}
-                    className="w-full h-full object-contain transform scale-x-[-1]"
-                 />
+                <canvas
+                   ref={fullscreenCanvasRef}
+                   className={`w-full h-full object-contain ${facingMode === 'user' ? 'transform scale-x-[-1]' : ''}`}
+                />
                  
                  {countdown !== null && countdown > 0 && (
                    <motion.div 
