@@ -1277,7 +1277,7 @@ export default function App() {
             }
             tempCtx.drawImage(sourceImage as CanvasImageSource, 0, 0, temp.width, temp.height);
             
-            const dataUrl = temp.toDataURL('image/jpeg', 0.85);
+            const dataUrl = temp.toDataURL('image/png');
             const imageObj = new Image();
             imageObj.src = dataUrl;
             
@@ -1361,7 +1361,7 @@ export default function App() {
           }
           tempCtx.drawImage(sourceImage as CanvasImageSource, 0, 0, temp.width, temp.height);
           
-          const dataUrl = temp.toDataURL('image/jpeg', 0.85);
+          const dataUrl = temp.toDataURL('image/png');
           const imageObj = new Image();
           imageObj.src = dataUrl;
           
@@ -2390,7 +2390,7 @@ export default function App() {
                 {videoUrl && !isSyncing && (
                   <div className="w-[70%] md:w-[80%] max-w-[400px] flex flex-col items-center gap-2">
                     <h3 className="text-sm font-black uppercase text-gray-500">타임랩스 (촬영 과정)</h3>
-                    <video src={videoUrl} autoPlay loop muted playsInline className="w-full neo-border rounded-xl shadow-lg border-4 border-white bg-black" />
+                    <video key={videoUrl} src={videoUrl} autoPlay loop muted playsInline className="w-full neo-border rounded-xl shadow-lg border-4 border-white bg-black" />
                   </div>
                 )}
               </div>
