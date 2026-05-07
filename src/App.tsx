@@ -112,10 +112,13 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
   
+  const isAndroid = typeof window !== 'undefined' && /Android/i.test(navigator.userAgent);
+  const defaultFacingMode = isAndroid ? 'environment' : 'user';
+
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const facingModeRef = useRef<'user' | 'environment'>('user');
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>(defaultFacingMode);
+  const facingModeRef = useRef<'user' | 'environment'>(defaultFacingMode);
   const [activeTheme, setActiveTheme] = useState<Theme>(THEMES[0]);
   const [activeFrameDesign, setActiveFrameDesign] = useState<FrameDesign>(FRAME_DESIGNS[0]);
   const [frameMode, setFrameMode] = useState<FrameMode>('4-cut');
@@ -237,10 +240,20 @@ export default function App() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('이 브라우저/환경에서는 카메라를 지원하지 않거나 안전한 연결(HTTPS)이 아닙니다.');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: facingModeRef.current },
-        audio: false,
-      });
+      
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: { exact: facingModeRef.current } },
+          audio: false,
+        });
+      } catch (e) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: facingModeRef.current },
+          audio: false,
+        });
+      }
+
       if (videoRef.current) {
         // Stop any existing tracks
         if (videoRef.current.srcObject) {
@@ -290,55 +303,61 @@ export default function App() {
   const lastProcessTimeRef = useRef<number>(0);
 
   const processFrame = useCallback(async () => {
+    frameRef.current = requestAnimationFrame(processFrame);
+
+    if (!videoRef.current || !isCameraReady) return;
+
     const now = performance.now();
-    if (now - lastProcessTimeRef.current < 1000 / 30) {
-        frameRef.current = requestAnimationFrame(processFrame);
+
+    // If no background removal, draw at full speed (60fps)
+    if (!segmentationRef.current || !removeBackgroundRef.current) {
+        drawCanvas();
         return;
     }
+
+    // Heavy segmentation task - limit to 15fps to keep UI thread unblocked for animations/React
+    if (now - lastProcessTimeRef.current < 1000 / 15) {
+        drawCanvas(); // Draw the previous segmented frame
+        return;
+    }
+    
     lastProcessTimeRef.current = now;
 
-    if (videoRef.current && isCameraReady) {
-       if (segmentationRef.current && removeBackgroundRef.current) {
-           try {
-               const result = segmentationRef.current.segmentForVideo(videoRef.current, performance.now());
-               if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
-                   const maskArray = result.confidenceMasks[0].getAsFloat32Array();
-                   if (!segmentedCanvasRef.current) {
-                       segmentedCanvasRef.current = document.createElement('canvas');
-                   }
-                   const canvas = segmentedCanvasRef.current;
-                   const w = videoRef.current.videoWidth || 640;
-                   const h = videoRef.current.videoHeight || 480;
-                   if (canvas.width !== w) canvas.width = w;
-                   if (canvas.height !== h) canvas.height = h;
-                   
-                   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-                   if (ctx) {
-                       ctx.clearRect(0, 0, w, h);
-                       if (cameraFilterRef.current && cameraFilterRef.current !== 'none') {
-                           ctx.filter = cameraFilterRef.current;
-                       }
-                       ctx.drawImage(videoRef.current, 0, 0, w, h);
-                       ctx.filter = 'none';
-                       const imgData = ctx.getImageData(0, 0, w, h);
-                       for (let i = 0; i < maskArray.length; i++) {
-                           // Set alpha channel. maskArray[i] is person confidence (0 to 1).
-                           // Background will be 0.
-                           imgData.data[i * 4 + 3] = maskArray[i] * 255;
-                       }
-                       ctx.putImageData(imgData, 0, 0);
-                   }
-                   result.close();
-               }
-               drawCanvas();
-           } catch(e) {
-               drawCanvas();
-           }
-       } else {
-           drawCanvas();
-       }
+    try {
+        const result = segmentationRef.current.segmentForVideo(videoRef.current, performance.now());
+        if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
+            const maskArray = result.confidenceMasks[0].getAsFloat32Array();
+            if (!segmentedCanvasRef.current) {
+                segmentedCanvasRef.current = document.createElement('canvas');
+            }
+            const canvas = segmentedCanvasRef.current;
+            const w = videoRef.current.videoWidth || 640;
+            const h = videoRef.current.videoHeight || 480;
+            if (canvas.width !== w) canvas.width = w;
+            if (canvas.height !== h) canvas.height = h;
+            
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (ctx) {
+                ctx.clearRect(0, 0, w, h);
+                if (cameraFilterRef.current && cameraFilterRef.current !== 'none') {
+                    ctx.filter = cameraFilterRef.current;
+                }
+                ctx.drawImage(videoRef.current, 0, 0, w, h);
+                ctx.filter = 'none';
+                const imgData = ctx.getImageData(0, 0, w, h);
+                for (let i = 0; i < maskArray.length; i++) {
+                    // Set alpha channel. maskArray[i] is person confidence (0 to 1).
+                    // Background will be 0.
+                    imgData.data[i * 4 + 3] = maskArray[i] * 255;
+                }
+                ctx.putImageData(imgData, 0, 0);
+            }
+            result.close();
+        }
+        drawCanvas();
+    } catch(e) {
+        drawCanvas();
     }
-    frameRef.current = requestAnimationFrame(processFrame);
   }, [isCameraReady]);
 
   useEffect(() => {
@@ -1648,8 +1667,8 @@ export default function App() {
              </div>
              
              <p className="text-white font-black text-2xl mt-8 animate-pulse text-center">
-                사진 촬영 중... 예쁜 표정을 지어보세요! ✨<br/>
-                <span className="text-sm font-bold text-gray-400 mt-2 block">(여기를 보고 치즈!)</span>
+                사진 촬영 중... 예쁘고 멋지게! ✨<br/>
+                <span className="text-sm font-bold text-gray-400 mt-2 block">(카메라를 보세요!)</span>
              </p>
           </motion.div>
         )}
