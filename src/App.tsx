@@ -1298,8 +1298,10 @@ export default function App() {
         temp.height = sh;
         const tempCtx = temp.getContext('2d');
         if (tempCtx) {
-            tempCtx.translate(temp.width, 0);
-            tempCtx.scale(-1, 1);
+            if (facingModeRef.current === 'user') {
+                tempCtx.translate(temp.width, 0);
+                tempCtx.scale(-1, 1);
+            }
             if (cameraFilterRef.current !== 'none') {
                  tempCtx.filter = cameraFilterRef.current;
             }
@@ -1384,8 +1386,10 @@ export default function App() {
       temp.height = sh;
       const tempCtx = temp.getContext('2d');
       if (tempCtx) {
-          tempCtx.translate(temp.width, 0);
-          tempCtx.scale(-1, 1);
+          if (facingModeRef.current === 'user') {
+              tempCtx.translate(temp.width, 0);
+              tempCtx.scale(-1, 1);
+          }
           if (cameraFilterRef.current !== 'none') {
                tempCtx.filter = cameraFilterRef.current;
           }
