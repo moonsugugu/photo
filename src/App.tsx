@@ -219,6 +219,11 @@ export default function App() {
   useEffect(() => {
     const initSegmenter = async () => {
       try {
+        const originalInfo = console.info;
+        console.info = (...args) => {
+            if (args[0] && typeof args[0] === 'string' && args[0].includes('TensorFlow Lite XNNPACK delegate')) return;
+            originalInfo(...args);
+        };
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
@@ -231,6 +236,7 @@ export default function App() {
           outputCategoryMask: false,
           outputConfidenceMasks: true,
         });
+        console.info = originalInfo;
       } catch (e) {
         console.error("Failed to initialize MediaPipe Image Segmenter:", e);
       }
@@ -533,11 +539,11 @@ export default function App() {
         const isRetakingThisSlot = retakingIndex === index;
         
         if (isRetakingThisSlot && liveSource) {
-            drawCover(ctx, liveSource, slot.x, slot.y, slot.w, slot.h, true, shape, cameraFilterRef.current);
+            drawCover(ctx, liveSource, slot.x, slot.y, slot.w, slot.h, facingModeRef.current === 'user', shape, cameraFilterRef.current);
         } else if (index < currentShots.length && (currentShots[index].imageObj?.complete || currentShots[index].imageObj instanceof HTMLCanvasElement)) {
             drawCover(ctx, currentShots[index].imageObj!, slot.x, slot.y, slot.w, slot.h, false, shape);
         } else if (index === currentShots.length && retakingIndex === null && liveSource) {
-            drawCover(ctx, liveSource, slot.x, slot.y, slot.w, slot.h, true, shape, cameraFilterRef.current);
+            drawCover(ctx, liveSource, slot.x, slot.y, slot.w, slot.h, facingModeRef.current === 'user', shape, cameraFilterRef.current);
         } else {
              // Future slots, show placeholder
              ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -1108,7 +1114,7 @@ export default function App() {
       videoExtRef.current = 'mp4';
     }
 
-    const options = mimeType ? { mimeType } : undefined;
+    const options = mimeType ? { mimeType, videoBitsPerSecond: 8000000 } : { videoBitsPerSecond: 8000000 };
     const recorder = new MediaRecorder(stream, options);
     const chunks: Blob[] = [];
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
@@ -1235,8 +1241,10 @@ export default function App() {
           if (src && captureTempCtx) {
               captureTempCtx.clearRect(0, 0, captureTempCanvas.width, captureTempCanvas.height);
               captureTempCtx.save();
-              captureTempCtx.translate(captureTempCanvas.width, 0);
-              captureTempCtx.scale(-1, 1);
+              if (facingModeRef.current === 'user') {
+                  captureTempCtx.translate(captureTempCanvas.width, 0);
+                  captureTempCtx.scale(-1, 1);
+              }
               captureTempCtx.drawImage(src as CanvasImageSource, 0, 0, captureTempCanvas.width, captureTempCanvas.height);
               captureTempCtx.restore();
               
@@ -1317,8 +1325,10 @@ export default function App() {
         if (src && captureTempCtx) {
             captureTempCtx.clearRect(0, 0, captureTempCanvas.width, captureTempCanvas.height);
             captureTempCtx.save();
-            captureTempCtx.translate(captureTempCanvas.width, 0);
-            captureTempCtx.scale(-1, 1);
+            if (facingModeRef.current === 'user') {
+                captureTempCtx.translate(captureTempCanvas.width, 0);
+                captureTempCtx.scale(-1, 1);
+            }
             captureTempCtx.drawImage(src as CanvasImageSource, 0, 0, captureTempCanvas.width, captureTempCanvas.height);
             captureTempCtx.restore();
             
@@ -2390,7 +2400,7 @@ export default function App() {
                 {videoUrl && !isSyncing && (
                   <div className="w-[70%] md:w-[80%] max-w-[400px] flex flex-col items-center gap-2">
                     <h3 className="text-sm font-black uppercase text-gray-500">타임랩스 (촬영 과정)</h3>
-                    <video key={videoUrl} src={videoUrl} autoPlay loop muted playsInline className="w-full neo-border rounded-xl shadow-lg border-4 border-white bg-black" />
+                    <video key={`${videoUrl}-${Date.now()}`} src={videoUrl} autoPlay loop muted playsInline className="w-full neo-border rounded-xl shadow-lg border-4 border-white bg-black" />
                   </div>
                 )}
               </div>
