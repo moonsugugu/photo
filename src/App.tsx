@@ -1120,6 +1120,15 @@ export default function App() {
     
     let frameIndex = 0;
     
+    // Create reusable canvases for ImageData conversion to avoid memory leaks
+    const numShots = framesArray.length;
+    const imageDataCanvases = Array.from({ length: numShots }).map(() => {
+        const tempC = document.createElement('canvas');
+        tempC.width = 200; // Same as captureTempCanvas
+        tempC.height = 150;
+        return tempC;
+    });
+
     const drawNextFrame = () => {
         if (frameIndex >= maxFrames) {
             recorder.stop();
@@ -1142,10 +1151,22 @@ export default function App() {
             const frame = framesArray[s][Math.min(frameIndex, framesArray[s].length - 1)];
             if (!frame) continue;
             
-            tempShots.push({
-               dataUrl: '',
-               imageObj: frame as unknown as HTMLImageElement,
-            });
+            const tempC = imageDataCanvases[s];
+            if (tempC && frame instanceof ImageData) {
+                const tempCtx = tempC.getContext('2d');
+                if (tempCtx) {
+                    tempCtx.putImageData(frame, 0, 0);
+                }
+                tempShots.push({
+                   dataUrl: '',
+                   imageObj: tempC as unknown as HTMLImageElement,
+                });
+            } else {
+                tempShots.push({
+                   dataUrl: '',
+                   imageObj: frame as unknown as HTMLImageElement,
+                });
+            }
         }
         
         renderScene(
@@ -1209,23 +1230,18 @@ export default function App() {
       const shotFrames: any[] = [];
       const captureInterval = setInterval(() => {
           const v = videoRef.current;
-          const seg = segmentedCanvasRef.current;
+          const seg = removeBackgroundRef.current ? segmentedCanvasRef.current : null;
           const src = (seg && seg.width > 0) ? seg : v;
           if (src && captureTempCtx) {
+              captureTempCtx.clearRect(0, 0, captureTempCanvas.width, captureTempCanvas.height);
               captureTempCtx.save();
               captureTempCtx.translate(captureTempCanvas.width, 0);
               captureTempCtx.scale(-1, 1);
               captureTempCtx.drawImage(src as CanvasImageSource, 0, 0, captureTempCanvas.width, captureTempCanvas.height);
               captureTempCtx.restore();
               
-              const copyCanvas = document.createElement('canvas');
-              copyCanvas.width = captureTempCanvas.width;
-              copyCanvas.height = captureTempCanvas.height;
-              const copyCtx = copyCanvas.getContext('2d');
-              if (copyCtx) {
-                   copyCtx.drawImage(captureTempCanvas, 0, 0);
-                   shotFrames.push(copyCanvas);
-              }
+              const imgData = captureTempCtx.getImageData(0, 0, captureTempCanvas.width, captureTempCanvas.height);
+              shotFrames.push(imgData);
           }
       }, 1000 / 15);
 
@@ -1296,23 +1312,18 @@ export default function App() {
     const shotFrames: any[] = [];
     const captureInterval = setInterval(() => {
         const v = videoRef.current;
-        const seg = segmentedCanvasRef.current;
+        const seg = removeBackgroundRef.current ? segmentedCanvasRef.current : null;
         const src = (seg && seg.width > 0) ? seg : v;
         if (src && captureTempCtx) {
+            captureTempCtx.clearRect(0, 0, captureTempCanvas.width, captureTempCanvas.height);
             captureTempCtx.save();
             captureTempCtx.translate(captureTempCanvas.width, 0);
             captureTempCtx.scale(-1, 1);
             captureTempCtx.drawImage(src as CanvasImageSource, 0, 0, captureTempCanvas.width, captureTempCanvas.height);
             captureTempCtx.restore();
             
-            const copyCanvas = document.createElement('canvas');
-            copyCanvas.width = captureTempCanvas.width;
-            copyCanvas.height = captureTempCanvas.height;
-            const copyCtx = copyCanvas.getContext('2d');
-            if (copyCtx) {
-                 copyCtx.drawImage(captureTempCanvas, 0, 0);
-                 shotFrames.push(copyCanvas);
-            }
+            const imgData = captureTempCtx.getImageData(0, 0, captureTempCanvas.width, captureTempCanvas.height);
+            shotFrames.push(imgData);
         }
     }, 1000 / 15);
 
