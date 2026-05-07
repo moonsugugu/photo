@@ -113,10 +113,14 @@ export default function App() {
   const [passwordError, setPasswordError] = useState(false);
   
   const isAndroid = typeof window !== 'undefined' && /Android/i.test(navigator.userAgent);
-  const isMobile = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const isMobile = typeof window !== 'undefined' && (
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
   const defaultFacingMode = isAndroid ? 'environment' : 'user';
 
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const isCameraReadyRef = useRef(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>(defaultFacingMode);
   const facingModeRef = useRef<'user' | 'environment'>(defaultFacingMode);
@@ -236,6 +240,8 @@ export default function App() {
 
   // --- Camera Setup ---
   const startCamera = useCallback(async () => {
+    setIsCameraReady(false);
+    isCameraReadyRef.current = false;
     setCameraError(null);
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -258,16 +264,24 @@ export default function App() {
           audio: false,
         });
       } catch (e) {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: facingModeRef.current },
-          audio: false,
-        });
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: facingModeRef.current },
+            audio: false,
+          });
+        } catch (e2) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: facingModeRef.current },
+            audio: false,
+          });
+        }
       }
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = async () => {
           setIsCameraReady(true);
+          isCameraReadyRef.current = true;
           try {
             await videoRef.current?.play();
           } catch(e: any) {
@@ -308,9 +322,11 @@ export default function App() {
   const lastProcessTimeRef = useRef<number>(0);
 
   const processFrame = useCallback(async () => {
-    frameRef.current = requestAnimationFrame(processFrame);
 
-    if (!videoRef.current || !isCameraReady) return;
+    if (!videoRef.current || videoRef.current.readyState < 2 || !isCameraReadyRef.current) {
+        frameRef.current = requestAnimationFrame(processFrame);
+        return;
+    }
 
     const now = performance.now();
 
@@ -363,16 +379,24 @@ export default function App() {
     } catch(e) {
         drawCanvas();
     }
-  }, [isCameraReady]);
+    frameRef.current = requestAnimationFrame(processFrame);
+  }, []);
+
+  // Use a ref to ensure we only start the initial loop once
+  const isLoopRunningRef = useRef(false);
 
   useEffect(() => {
-    if (isCameraReady) {
+    if (!isLoopRunningRef.current) {
+      isLoopRunningRef.current = true;
       frameRef.current = requestAnimationFrame(processFrame);
     }
     return () => {
+      // We don't want to cancel because we want it running continuously
+      // but if the component unmounts we should cancel.
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
+      isLoopRunningRef.current = false;
     };
-  }, [isCameraReady, processFrame]);
+  }, [processFrame]);
 
   const drawCover = (ctx: CanvasRenderingContext2D, source: HTMLImageElement | HTMLVideoElement, x: number, y: number, w: number, h: number, mirror: boolean, shape: string = 'rect', filter: string = 'none') => {
       const srcW = source instanceof HTMLVideoElement ? source.videoWidth || 640 : source.width;
