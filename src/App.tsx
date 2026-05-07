@@ -333,12 +333,14 @@ export default function App() {
     // If no background removal, draw at full speed (60fps)
     if (!segmentationRef.current || !removeBackgroundRef.current) {
         drawCanvas();
+        frameRef.current = requestAnimationFrame(processFrame);
         return;
     }
 
     // Heavy segmentation task - limit to 15fps to keep UI thread unblocked for animations/React
     if (now - lastProcessTimeRef.current < 1000 / 15) {
         drawCanvas(); // Draw the previous segmented frame
+        frameRef.current = requestAnimationFrame(processFrame);
         return;
     }
     
