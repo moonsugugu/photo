@@ -1,4 +1,4 @@
-export type DecorationType = 'floating' | 'bubbles' | 'grid' | 'dots' | 'stars' | 'floral' | 'notebook' | 'waves' | 'gradient' | 'confetti' | 'hearts' | 'checkers' | 'sparkles' | 'clouds' | 'geometric' | 'bunting' | 'rings' | 'blobs' | 'hills';
+export type DecorationType = 'floating' | 'bubbles' | 'grid' | 'dots' | 'stars' | 'floral' | 'notebook' | 'waves' | 'gradient' | 'confetti' | 'hearts' | 'checkers' | 'sparkles' | 'clouds' | 'geometric' | 'bunting' | 'rings' | 'blobs' | 'hills' | 'lunar';
 
 export interface Theme {
   id: string;
@@ -11,6 +11,7 @@ export interface Theme {
   bgImageUrl?: string;
   palettes: { bgColor: string; fgColor: string; accColor: string }[];
   decorationType?: DecorationType;
+  imageCrop?: [number, number, number, number];
 }
 
 export type FrameMode = '1-cut' | '3-cut' | '4-cut';
@@ -23,6 +24,9 @@ export interface FrameDesign {
   borderColor: string;
   emoji: string;
   shape: 'rect' | 'rounded' | 'circle' | 'arch' | 'oval' | 'stamp' | 'ticket' | 'heart' | 'star';
+  imageSrc?: string;
+  imageCrop?: [number, number, number, number];
+  themeId?: string;
 }
 
 export interface Sticker {

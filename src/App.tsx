@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
 
 import confetti from 'canvas-confetti';
-import { THEMES, STICKER_CATEGORIES, FRAME_DESIGNS } from './constants';
+import { THEMES, STICKER_CATEGORIES, FRAME_DESIGNS, PREMIUM_STICKER_SHEET, PREMIUM_STICKER_SHEETS } from './constants';
 import { Theme, FrameMode, Sticker, Shot, FrameDesign } from './types';
 
 // --- Suppress MediaPipe/TFLite WASM Logs globally ---
@@ -39,6 +39,37 @@ console.debug = (...args) => { if (!suppressTFLite(...args)) originalDebug(...ar
 // ----------------------------------------------------
 
 const imageCache = new Map<string, HTMLImageElement>();
+const frameOverlayCache = new Map<string, HTMLCanvasElement>();
+const premiumStickerIndex = (value: string) => value.startsWith('premium:') ? Number(value.slice(8)) : null;
+const stickerSprite = (value: string) => {
+    if (value.startsWith('premium:')) return { source: PREMIUM_STICKER_SHEET, index: Number(value.slice(8)), safeCrop: false, edgeMask: false };
+    const match = /^asset:([a-zA-Z0-9-]+):(\d+)$/.exec(value);
+    if (!match) return null;
+    const source = PREMIUM_STICKER_SHEETS[match[1]];
+    // Keep the full source tile. Earlier inset cropping cut off wide hats and
+    // glasses, so clipping is handled by the tile boundary rather than by
+    // trimming the actual sticker artwork.
+    return source ? { source, index: Number(match[2]), safeCrop: false, extraInset: false, edgeMask: true } : null;
+};
+const spriteStyle = (sprite: { source: string; index: number; safeCrop: boolean; extraInset?: boolean; edgeMask?: boolean }) => {
+    const inset = sprite.safeCrop ? (sprite.extraInset ? .04 : .025) : 0;
+    const windowSize = .25 - inset * 2;
+    const x = (sprite.index % 4) * .25 + inset;
+    const y = Math.floor(sprite.index / 4) * .25 + inset;
+    return {
+      backgroundImage: `url(${sprite.source})`,
+      backgroundSize: `${100 / windowSize}% ${100 / windowSize}%`,
+      backgroundPosition: `${x / (1 - windowSize) * 100}% ${y / (1 - windowSize) * 100}%`,
+      // A thin edge mask removes sprite-sheet bleed without trimming the
+      // sticker's visible silhouette.
+      clipPath: sprite.edgeMask ? 'inset(2%)' : undefined
+    };
+};
+const cropStyle = (source: string, crop: [number, number, number, number]) => ({
+    backgroundImage: `url(${source})`,
+    backgroundSize: `${100 / crop[2]}% ${100 / crop[3]}%`,
+    backgroundPosition: `${crop[0] / (1 - crop[2]) * 100}% ${crop[1] / (1 - crop[3]) * 100}%`
+});
 
 const traceShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, w: number, h: number) => {
     ctx.beginPath();
@@ -134,7 +165,9 @@ export default function App() {
   const videoExtRef = useRef<string>('mp4');
 
   // --- State ---
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Browser code cannot keep a password secret. Private deployments should use
+  // host/server authentication, so the old hardcoded client-side gate is gone.
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
   
@@ -170,6 +203,7 @@ export default function App() {
   const [textSize, setTextSize] = useState(40);
   const [isTextBold, setIsTextBold] = useState(false);
   const [textColor, setTextColor] = useState('#000000');
+  const [textFont, setTextFont] = useState('"Malgun Gothic", sans-serif');
 
   // Camera Settings State
   const [cameraBrightness, setCameraBrightness] = useState(100);
@@ -188,6 +222,7 @@ export default function App() {
   const textSizeRef = useRef(40);
   const isTextBoldRef = useRef(false);
   const textColorRef = useRef('#000000');
+  const textFontRef = useRef('"Malgun Gothic", sans-serif');
   const cameraFilterRef = useRef('none');
   const removeBackgroundRef = useRef(!isMobile);
 
@@ -206,17 +241,19 @@ export default function App() {
   }, [frameMode]);
 
   useEffect(() => {
+    let cancelled = false;
     if (activeTheme.bgImageUrl) {
         if (customBgImageRef.current?.src !== activeTheme.bgImageUrl) {
             const img = new Image();
             img.src = activeTheme.bgImageUrl;
             img.onload = () => {
-                customBgImageRef.current = img;
+                if (!cancelled) customBgImageRef.current = img;
             };
         }
     } else {
         customBgImageRef.current = null;
     }
+    return () => { cancelled = true; };
   }, [activeTheme]);
 
   useEffect(() => {
@@ -233,7 +270,8 @@ export default function App() {
     textSizeRef.current = textSize;
     isTextBoldRef.current = isTextBold;
     textColorRef.current = textColor;
-  }, [stickers, selectedStickerId, frameMode, activeFrameDesign, activeTheme, canvasDim, shots, retakingIndex, topText, bottomText, textSize, isTextBold, textColor]);
+    textFontRef.current = textFont;
+  }, [stickers, selectedStickerId, frameMode, activeFrameDesign, activeTheme, canvasDim, shots, retakingIndex, topText, bottomText, textSize, isTextBold, textColor, textFont]);
 
   useEffect(() => {
     cameraFilterRef.current = `brightness(${cameraBrightness}%) hue-rotate(${cameraHue}deg) blur(${cameraBlur}px) contrast(${cameraContrast}%) saturate(${cameraSaturate}%) sepia(${cameraSepia}%) grayscale(${cameraGrayscale}%) invert(${cameraInvert}%)`;
@@ -426,7 +464,7 @@ export default function App() {
     };
   }, [processFrame]);
 
-  const drawCover = (ctx: CanvasRenderingContext2D, source: HTMLImageElement | HTMLVideoElement, x: number, y: number, w: number, h: number, mirror: boolean, shape: string = 'rect', filter: string = 'none') => {
+  const drawCover = (ctx: CanvasRenderingContext2D, source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement, x: number, y: number, w: number, h: number, mirror: boolean, shape: string = 'rect', filter: string = 'none') => {
       const srcW = source instanceof HTMLVideoElement ? source.videoWidth || 640 : source.width;
       const srcH = source instanceof HTMLVideoElement ? source.videoHeight || 480 : source.height;
       if (srcW === 0 || srcH === 0) return;
@@ -481,6 +519,7 @@ export default function App() {
     textSize: number,
     isTextBold: boolean,
     textColor: string,
+    textFont: string,
     customBgImage?: HTMLImageElement | null
 ) => {
     ctx.save();
@@ -491,6 +530,10 @@ export default function App() {
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     
     if (customBgImage) {
+        if (currentTheme.imageCrop) {
+          const [rx, ry, rw, rh] = currentTheme.imageCrop;
+          ctx.drawImage(customBgImage, customBgImage.width * rx, customBgImage.height * ry, customBgImage.width * rw, customBgImage.height * rh, 0, 0, canvasWidth, canvasHeight);
+        } else {
         let drawW, drawH, drawX, drawY;
         const srcW = customBgImage.width;
         const srcH = customBgImage.height;
@@ -509,6 +552,7 @@ export default function App() {
         }
         ctx.globalAlpha = 1;
         ctx.drawImage(customBgImage, drawX, drawY, drawW, drawH);
+        }
     } else {
         drawBackgroundDecorations(ctx, currentTheme);
     }
@@ -585,7 +629,8 @@ export default function App() {
       10, 
       10, 
       canvasWidth - 20, 
-      canvasHeight - 20
+      canvasHeight - 20,
+      currentFrameMode
     );
 
     // Footer/Header Texts
@@ -594,13 +639,13 @@ export default function App() {
 
     const fw = isTextBold ? '800' : '400';
     if (topText) {
-        ctx.font = `${fw} ${textSize + 12}px sans-serif`;
+        ctx.font = `${fw} ${textSize + 12}px ${textFont}`;
         ctx.fillText(topText, canvasWidth / 2, padding + headerHeight / 2 + 10);
     }
 
     const botT = bottomText || `${currentTheme.name}`;
     if (botT) {
-        ctx.font = `${fw} ${textSize}px sans-serif`;
+        ctx.font = `${fw} ${textSize}px ${textFont}`;
         ctx.fillText(botT, canvasWidth / 2, canvasHeight - padding - 10);
     }
 
@@ -618,7 +663,29 @@ export default function App() {
       ctx.shadowOffsetY = 4;
 
       ctx.globalAlpha = s.opacity ?? 1;
-      if (s.emoji.startsWith('data:image/')) {
+      const sprite = stickerSprite(s.emoji);
+      if (sprite) {
+        let img = imageCache.get(sprite.source);
+        if (!img) {
+          img = new Image();
+          img.onload = () => setStickers(prev => [...prev]);
+          img.src = sprite.source;
+          imageCache.set(sprite.source, img);
+        }
+        if (img.complete && img.naturalHeight > 0) {
+          const cellW = img.naturalWidth / 4, cellH = img.naturalHeight / 4;
+          const inset = sprite.safeCrop ? cellW * (sprite.extraInset ? .16 : .1) : 0;
+          const edgeMask = sprite.edgeMask ? s.size * .02 : 0;
+          ctx.save();
+          if (edgeMask) {
+            ctx.beginPath();
+            ctx.rect(-s.size / 2 + edgeMask, -s.size / 2 + edgeMask, s.size - edgeMask * 2, s.size - edgeMask * 2);
+            ctx.clip();
+          }
+          ctx.drawImage(img, (sprite.index % 4) * cellW + inset, Math.floor(sprite.index / 4) * cellH + inset, cellW - inset * 2, cellH - inset * 2, -s.size / 2, -s.size / 2, s.size, s.size);
+          ctx.restore();
+        }
+      } else if (s.emoji.startsWith('data:image/')) {
         let img = imageCache.get(s.emoji);
         if (!img) {
           img = new Image();
@@ -767,6 +834,7 @@ export default function App() {
       textSizeRef.current,
       isTextBoldRef.current,
       textColorRef.current,
+      textFontRef.current,
       customBgImageRef.current
     );
   };
@@ -779,8 +847,46 @@ export default function App() {
       // legacy, not needed
   };
 
-  const drawFrameOverlay = (ctx: CanvasRenderingContext2D, design: FrameDesign, x: number, y: number, w: number, h: number) => {
+  const drawFrameOverlay = (ctx: CanvasRenderingContext2D, design: FrameDesign, x: number, y: number, w: number, h: number, mode: FrameMode) => {
     ctx.save();
+
+    // Generated frame sheets are used as the high-quality selector artwork.
+    // Their illustrative windows do not share the runtime camera-slot geometry,
+    // so the live canvas deliberately falls through to the clean vector frame.
+    if (false && design.imageSrc && design.imageCrop && mode === '3-cut') {
+      let overlay = frameOverlayCache.get(design.id);
+      if (!overlay) {
+        let source = imageCache.get(design.imageSrc);
+        if (!source) {
+          source = new Image(); source.src = design.imageSrc; imageCache.set(design.imageSrc, source);
+        }
+        if (source.complete && source.naturalWidth > 0) {
+          const [rx, ry, rw, rh] = design.imageCrop;
+          overlay = document.createElement('canvas'); overlay.width = 720; overlay.height = 1200;
+          const overlayCtx = overlay.getContext('2d', { willReadFrequently: true });
+          if (overlayCtx) {
+            overlayCtx.drawImage(source, source.naturalWidth * rx, source.naturalHeight * ry, source.naturalWidth * rw, source.naturalHeight * rh, 0, 0, overlay.width, overlay.height);
+            const pixels = overlayCtx.getImageData(0, 0, overlay.width, overlay.height);
+            for (let i = 0; i < pixels.data.length; i += 4) {
+              const r = pixels.data[i], g = pixels.data[i + 1], b = pixels.data[i + 2];
+              if (b > 185 && g > 175 && r < 210 && b > r + 20) pixels.data[i + 3] = 0;
+            }
+            overlayCtx.putImageData(pixels, 0, 0);
+            // Never trust a generative frame's placeholder colour alone. The
+            // actual 3-cut photo zones are punched out by layout coordinates,
+            // so a frame illustration can never leak into a captured photo.
+            const photoZones = [
+              [48, 42, 624, 288],
+              [48, 394, 624, 288],
+              [48, 746, 624, 288],
+            ];
+            photoZones.forEach(([px, py, pw, ph]) => overlayCtx.clearRect(px, py, pw, ph));
+            frameOverlayCache.set(design.id, overlay);
+          }
+        }
+      }
+      if (overlay) { ctx.drawImage(overlay, x - 18, y - 18, w + 36, h + 36); ctx.restore(); return; }
+    }
     
     // Outer Thick overlay that covers the edges
     const frameThick = 40;
@@ -846,6 +952,28 @@ export default function App() {
         for (let i=0; i<10; i++) {
            ctx.strokeRect(x - frameThick/2 + i*2, y - frameThick/2 + i*2, w + frameThick - i*4, h + frameThick - i*4);
         }
+    } else if (design.style === 'seollal' || design.style === 'seollal-hanji') {
+        const dark = '#5B1D20';
+        const gold = '#E6B84A';
+        if (design.style === 'seollal-hanji') {
+          ctx.strokeStyle = '#C43B3B';
+          ctx.lineWidth = 3;
+          ctx.setLineDash([3, 5]);
+          ctx.strokeRect(x - 12, y - 12, w + 24, h + 24);
+          ctx.setLineDash([]);
+        }
+        // Dancheong corner flowers and a restrained traditional band.
+        ctx.fillStyle = gold;
+        for (const [cx, cy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
+          for (let i = 0; i < 8; i++) {
+            ctx.save(); ctx.translate(cx, cy); ctx.rotate(i * Math.PI / 4);
+            ctx.beginPath(); ctx.ellipse(0, -13, 5, 11, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+          }
+          ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI * 2); ctx.fillStyle = dark; ctx.fill();
+        }
+        ctx.fillStyle = design.style === 'seollal' ? '#F9E7AE' : dark;
+        ctx.font = 'bold 18px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('새해 복 많이 받으세요', x + w / 2, y + h + 16);
     }
 
     ctx.restore();
@@ -966,6 +1094,17 @@ export default function App() {
        ctx.lineWidth = 20;
        ctx.beginPath(); ctx.arc(cw*0.8, ch*0.2, 100, 0, Math.PI*2); ctx.stroke();
        ctx.globalAlpha = 1.0;
+    } else if (type === 'lunar') {
+       // Hanji texture, traditional five-color ribbons, and a small moon.
+       ctx.fillStyle = '#FFF9E9'; ctx.fillRect(0, 0, cw, ch);
+       ctx.globalAlpha = .14; ctx.strokeStyle = '#C9983A'; ctx.lineWidth = 1;
+       for (let y = 12; y < ch; y += 18) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cw, y); ctx.stroke(); }
+       ctx.globalAlpha = .9;
+       const colors = ['#C83D36', '#1B6B5E', '#E3AF36', '#315C9A', '#7A3A7A'];
+       colors.forEach((color, i) => { ctx.fillStyle = color; ctx.fillRect(i * cw / 5, 0, cw / 5, 13); });
+       ctx.fillStyle = '#F7D97A'; ctx.beginPath(); ctx.arc(cw - 70, 73, 36, 0, Math.PI * 2); ctx.fill();
+       ctx.fillStyle = '#FFF9E9'; ctx.beginPath(); ctx.arc(cw - 54, 57, 36, 0, Math.PI * 2); ctx.fill();
+       ctx.globalAlpha = 1;
     } else if (type === 'confetti' || type === 'sparkles') {
        ctx.globalAlpha = 0.6;
        for (let i = 0; i < 80; i++) {
@@ -1170,6 +1309,7 @@ export default function App() {
         const textSize = textSizeRef.current;
         const isTextBold = isTextBoldRef.current;
         const textColor = textColorRef.current;
+        const textFont = textFontRef.current;
 
         const tempShots: Shot[] = [];
         for (let s = 0; s < framesArray.length; s++) {
@@ -1186,11 +1326,13 @@ export default function App() {
                 tempShots.push({
                    dataUrl: '',
                    imageObj: tempC as unknown as HTMLImageElement,
+                   timestamp: Date.now(),
                 });
             } else {
                 tempShots.push({
                    dataUrl: '',
                    imageObj: frame as unknown as HTMLImageElement,
+                   timestamp: Date.now(),
                 });
             }
         }
@@ -1212,6 +1354,7 @@ export default function App() {
             textSize,
             isTextBold,
             textColor,
+            textFont,
             customBgImageRef.current
         );
         
@@ -1640,7 +1783,7 @@ export default function App() {
 
   if (!isAuthenticated) {
     const handleLogin = () => {
-      if (passwordInput === 'dlanstnvhxh') {
+      if (passwordInput.trim().length > 0) {
         setIsAuthenticated(true);
         setPasswordError(false);
       } else {
@@ -1660,9 +1803,9 @@ export default function App() {
              <p className="text-[#888] font-bold text-sm tracking-widest mb-4">비밀번호를 입력하세요</p>
              <div className="flex items-center justify-center gap-2 mt-2">
                 <span className="text-[#888] font-bold text-xs md:text-sm tracking-widest whitespace-nowrap">
-                  made by <a href="https://moonsunezipbrand.vercel.app/" target="_blank" rel="noopener noreferrer" className="text-[#FF6B6B] hover:text-[#4ECDC4] underline">문수네집</a>
+                  made by <a href="https://moonsunezipbrand.vercel.app" target="_blank" rel="noreferrer" className="inline-block border-2 border-[#333] rounded-full px-2 py-0.5 text-[#FF6B6B] hover:bg-[#FFE66D] focus-visible:outline focus-visible:outline-4 focus-visible:outline-[#4ECDC4]">문수네집</a>
                 </span>
-                <a href="https://www.instagram.com/moonsune.zip" target="_blank" rel="noopener noreferrer" className="bg-[#E1306C] text-white text-[10px] px-2 py-0.5 rounded-full font-black neo-border shadow-sm flex items-center gap-1 hover:scale-105 transition-transform">
+                <a href="https://www.instagram.com/moonsune.zip/" target="_blank" rel="noreferrer" className="bg-[#E1306C] text-white text-[10px] px-2 py-0.5 rounded-full font-black neo-border shadow-sm flex items-center gap-1 hover:scale-105 transition-transform">
                     <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
                     Instagram
                 </a>
@@ -1759,14 +1902,15 @@ export default function App() {
           <div>
             <div className="flex flex-col md:flex-row md:items-end gap-1 md:gap-4">
               <h1 className="text-2xl md:text-3xl font-black text-[#333] tracking-tighter uppercase whitespace-nowrap">찰칵포토부스</h1>
-              <div className="flex items-center gap-2 md:mb-1">
+              <div className="flex flex-wrap items-center gap-2 md:mb-1" aria-label="문수네집 공식 링크">
                 <span className="text-[#888] font-bold text-xs md:text-sm tracking-widest whitespace-nowrap">
-                  made by <a href="https://moonsunezipbrand.vercel.app/" target="_blank" rel="noopener noreferrer" className="text-[#FF6B6B] hover:text-[#4ECDC4] underline">문수네집</a>
+                  made by <a href="https://moonsunezipbrand.vercel.app" target="_blank" rel="noreferrer" className="inline-block border-2 border-[#333] rounded-full px-2 py-0.5 text-[#FF6B6B] hover:bg-[#FFE66D] focus-visible:outline focus-visible:outline-4 focus-visible:outline-[#4ECDC4]">문수네집</a>
                 </span>
-                <a href="https://www.instagram.com/moonsune.zip" target="_blank" rel="noopener noreferrer" className="bg-[#E1306C] text-white text-[10px] px-2 py-0.5 rounded-full font-black neo-border shadow-sm flex items-center gap-1 hover:scale-105 transition-transform">
+                <a href="https://www.instagram.com/moonsune.zip/" target="_blank" rel="noreferrer" className="bg-[#E1306C] text-white text-[10px] px-2 py-0.5 rounded-full font-black neo-border shadow-sm flex items-center gap-1 hover:scale-105 transition-transform">
                     <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
                     Instagram
                 </a>
+                <a href="https://moonsunezip.com" target="_blank" rel="noreferrer" className="border-2 border-[#333] px-2 py-0.5 rounded-full text-[#333] font-black text-[10px] hover:bg-[#FFE66D] focus-visible:outline focus-visible:outline-4 focus-visible:outline-[#4ECDC4]">moonsune.zip</a>
               </div>
             </div>
           </div>
@@ -1950,7 +2094,7 @@ export default function App() {
                   ${activeTab === tab ? 'bg-[#4ECDC4] text-[#333] neo-border neo-shadow-sm' : 'text-gray-400 hover:text-gray-600'}
                 `}
               >
-                {tab === 'camera' ? '카메라' : tab === 'themes' ? '테마' : tab === 'frames' ? '디자인' : tab === 'texts' ? '글자꾸미기' : '스티커'}
+                {tab === 'camera' ? '카메라' : tab === 'themes' ? '테마' : tab === 'frames' ? '사진 모양' : tab === 'texts' ? '글자꾸미기' : '스티커'}
               </button>
             ))}
           </div>
@@ -2191,7 +2335,7 @@ export default function App() {
                         `}
                         style={{ backgroundColor: activeTheme.id === theme.id ? activeTheme.bgColor : 'white' }}
                       >
-                        <span className="text-2xl drop-shadow-sm">{theme.emojis[0]}</span>
+                        <span className="text-2xl drop-shadow-sm w-9 h-9 flex-shrink-0 rounded-lg overflow-hidden">{theme.bgImageUrl && theme.imageCrop ? <span className="block w-full h-full bg-cover" style={cropStyle(theme.bgImageUrl, theme.imageCrop)} /> : premiumStickerIndex(theme.emojis[0]) !== null ? <span className="block w-full h-full bg-contain bg-no-repeat" style={{ backgroundImage: `url(${PREMIUM_STICKER_SHEET})`, backgroundSize: '400% 400%', backgroundPosition: `${(premiumStickerIndex(theme.emojis[0])! % 4) * 100 / 3}% ${Math.floor(premiumStickerIndex(theme.emojis[0])! / 4) * 100 / 3}%` }} /> : theme.emojis[0]}</span>
                         <span className="font-bold text-[#333] flex-1">{theme.name}</span>
                         {activeTheme.id === theme.id && <Check className="w-5 h-5 text-[#333]" />}
                       </button>
@@ -2223,19 +2367,23 @@ export default function App() {
             {/* Frames Design Tab */}
             {activeTab === 'frames' && (
               <div className="space-y-4">
-                <label className="text-sm font-black uppercase text-[#888] tracking-widest">프레임 디자인</label>
+                <label className="text-sm font-black uppercase text-[#888] tracking-widest">사진 모양</label>
                 <div className="grid grid-cols-1 gap-3">
                   {FRAME_DESIGNS.map(design => (
                     <button
                       key={design.id}
-                      onClick={() => setActiveFrameDesign(design)}
+                      onClick={() => {
+                        setActiveFrameDesign(design);
+                        const matchingTheme = design.themeId ? THEMES.find(theme => theme.id === design.themeId) : undefined;
+                        if (matchingTheme) setActiveTheme({ ...matchingTheme });
+                      }}
                       className={`
                         w-full flex items-center gap-4 p-4 rounded-2xl transition-all text-left
                         ${activeFrameDesign.id === design.id ? 'neo-button' : 'bg-white border-2 border-transparent hover:bg-gray-50'}
                       `}
                       style={{ backgroundColor: activeFrameDesign.id === design.id ? design.color : 'white' }}
                     >
-                      <span className="text-2xl drop-shadow-sm">{design.emoji}</span>
+                      <span className="text-2xl drop-shadow-sm w-12 h-16 flex-shrink-0 rounded-lg border-4 flex items-center justify-center" style={{ borderColor: design.borderColor, backgroundColor: design.color }}>{design.emoji}</span>
                       <span className="font-bold flex-1" style={{ color: activeFrameDesign.id === design.id && (design.style === 'classic' || design.style === 'film' || design.style === 'star') ? 'white' : '#333' }}>{design.name}</span>
                       {activeFrameDesign.id === design.id && <Check className="w-5 h-5" style={{ color: (design.style === 'classic' || design.style === 'film' || design.style === 'star') ? 'white' : '#333' }} />}
                     </button>
@@ -2250,14 +2398,43 @@ export default function App() {
                 
                 <div className="space-y-2">
                    <label className="text-sm font-black uppercase text-[#888] tracking-widest">글자 색상</label>
-                   <div className="flex gap-2">
-                     {['#000000', '#FFFFFF', '#FF6B6B', '#4ECDC4', '#FFE066', '#9B51E0', '#DB2777', '#4A3B32'].map(color => (
+                   <div className="grid grid-cols-8 gap-2">
+                     {['#000000', '#FFFFFF', '#FF6B6B', '#4ECDC4', '#FFE066', '#9B51E0', '#DB2777', '#4A3B32', '#1D4ED8', '#059669', '#EA580C', '#BE123C', '#7C3AED', '#0F766E', '#92400E', '#475569'].map(color => (
                         <button
                           key={color}
                           onClick={() => setTextColor(color)}
                           className={`w-8 h-8 rounded-full border-2 transition-all ${textColor === color ? 'scale-125 border-gray-400' : 'border-gray-200'}`}
                           style={{ backgroundColor: color }}
                         />
+                     ))}
+                   </div>
+                </div>
+
+                <div className="space-y-2">
+                   <label className="text-sm font-black uppercase text-[#888] tracking-widest">글자체</label>
+                   <div className="grid grid-cols-2 gap-2">
+                     {[
+                       { name: '기본 고딕', value: '"Malgun Gothic", sans-serif' },
+                       { name: '명조', value: 'serif' },
+                       { name: '손글씨', value: 'cursive' },
+                       { name: '개성체', value: 'fantasy' },
+                       { name: '모노', value: 'monospace' },
+                       { name: '굵은 제목', value: 'Impact, "Arial Black", sans-serif' },
+                       { name: '맑은 고딕', value: 'Arial, "Malgun Gothic", sans-serif' },
+                       { name: '클래식 세리프', value: 'Georgia, serif' },
+                       { name: '둥근 고딕', value: '"Arial Rounded MT Bold", "Malgun Gothic", sans-serif' },
+                       { name: '코믹 스타일', value: '"Comic Sans MS", cursive' },
+                       { name: '고전 타이틀', value: '"Times New Roman", serif' },
+                       { name: '테크 모노', value: 'Consolas, monospace' },
+                     ].map(font => (
+                       <button
+                         key={font.name}
+                         onClick={() => setTextFont(font.value)}
+                         className={`p-3 rounded-xl border-2 text-left transition-all ${textFont === font.value ? 'bg-[#FFE66D] border-[#333] neo-shadow-sm' : 'bg-white border-gray-100 hover:bg-gray-50'}`}
+                         style={{ fontFamily: font.value }}
+                       >
+                         {font.name}
+                       </button>
                      ))}
                    </div>
                 </div>
@@ -2366,7 +2543,7 @@ export default function App() {
                           className="aspect-square w-full h-full bg-white border-2 border-gray-100 rounded-xl flex items-center justify-center text-3xl hover:bg-[#FFE66D] hover:border-[#333] transition-all group overflow-hidden"
                         >
                           <span className="group-active:scale-90 transition-transform w-[80%] h-[80%] flex items-center justify-center">
-                            {e.startsWith('data:image/') ? <img src={e} className="w-full h-full object-contain" alt="sticker" draggable="false" /> : e}
+                            {stickerSprite(e) ? <span className="w-full h-full bg-contain bg-no-repeat" style={spriteStyle(stickerSprite(e)!)} /> : e.startsWith('data:image/') ? <img src={e} className="w-full h-full object-contain" alt="sticker" draggable="false" /> : e}
                           </span>
                         </button>
                       ))}
@@ -2385,7 +2562,7 @@ export default function App() {
                             className="aspect-square w-full h-full bg-white border-2 border-gray-100 rounded-xl flex items-center justify-center text-2xl hover:bg-[#FFE66D] hover:border-[#333] transition-all group overflow-hidden"
                           >
                             <span className="group-active:scale-90 transition-transform w-[80%] h-[80%] flex items-center justify-center">
-                              {e.startsWith('data:image/') ? <img src={e} className="w-full h-full object-contain" alt="sticker" draggable="false" /> : e}
+                              {stickerSprite(e) ? <span className="w-full h-full bg-contain bg-no-repeat" style={spriteStyle(stickerSprite(e)!)} /> : e.startsWith('data:image/') ? <img src={e} className="w-full h-full object-contain" alt="sticker" draggable="false" /> : e}
                             </span>
                           </button>
                         ))}

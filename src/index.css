@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Jua&family=Nanum+Myeongjo:wght@400;700&family=Inter:wght@400;700;900&family=Dongle:wght@300;400;700&family=Gowun+Dodum&family=Gowun+Batang:wght@400;700&family=Hi+Melody&display=swap');
+@import "tailwindcss";
 
 @theme {
   --font-sans: "Jua", "Inter", ui-sans-serif, system-ui, sans-serif;
