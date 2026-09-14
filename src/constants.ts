@@ -113,6 +113,14 @@ export const STICKER_CATEGORIES = [
   {
     name: 'Y2K / 힙한 감성',
     stickers: ['asset:lifestyle:12', 'asset:lifestyle:13', 'asset:lifestyle:14', 'asset:lifestyle:15', ...Array.from({ length: 8 }, (_, index) => `asset:snacksY2k:${index + 8}`)]
+  },
+  {
+    name: '테마 의상 전체 (남·여)',
+    // The current-theme area shows its matching pair; this section keeps the
+    // full wardrobe browseable without requiring users to switch themes.
+    stickers: ['outfitsA', 'outfitsB', 'outfitsC', 'outfitsD'].flatMap((sheet) =>
+      Array.from({ length: 16 }, (_, index) => `asset:${sheet}:${index}`)
+    )
   }
 ];
 

@@ -2521,8 +2521,11 @@ export default function App() {
 
                 <div className="space-y-6">
                   {/* Theme Emojis */}
-                  <div className="space-y-2">
-                    <h3 className="font-black text-sm uppercase text-gray-500">현재 테마의 스티커</h3>
+                  <div className="space-y-3 rounded-2xl border-2 border-[#FFE66D] bg-[#FFFDF0] p-3 shadow-sm">
+                    <div>
+                      <h3 className="font-black text-sm uppercase text-[#333]">{activeTheme.name} 추천 아이템 & 의상</h3>
+                      <p className="mt-0.5 text-[11px] font-bold text-gray-500">테마 소품과 남·여 의상을 함께 추천해요</p>
+                    </div>
                     <div className="grid grid-cols-4 gap-2">
                       {activeTheme.emojis.map((e, index) => (
                         <button 
