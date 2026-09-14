@@ -16,6 +16,10 @@ import premiumEyewearExtras from './assets/premium-eyewear-extras-sheet.png';
 import premiumStickersExtrasA from './assets/premium-stickers-extras-a-sheet.png';
 import premiumStickersExtrasB from './assets/premium-stickers-extras-b-sheet.png';
 import premiumSnacksY2kExtras from './assets/premium-snacks-y2k-extras-sheet.png';
+import themeOutfitsA from './assets/theme-outfits-a-sheet.png';
+import themeOutfitsB from './assets/theme-outfits-b-sheet.png';
+import themeOutfitsC from './assets/theme-outfits-c-sheet.png';
+import themeOutfitsD from './assets/theme-outfits-d-sheet.png';
 
 export const PREMIUM_STICKER_SHEET = premiumStickers;
 export const PREMIUM_STICKER_SHEETS: Record<string, string> = {
@@ -29,6 +33,10 @@ export const PREMIUM_STICKER_SHEETS: Record<string, string> = {
   extrasA: premiumStickersExtrasA,
   extrasB: premiumStickersExtrasB,
   snacksY2k: premiumSnacksY2kExtras,
+  outfitsA: themeOutfitsA,
+  outfitsB: themeOutfitsB,
+  outfitsC: themeOutfitsC,
+  outfitsD: themeOutfitsD,
 };
 
 export const THEMES: Theme[] = [
@@ -164,6 +172,18 @@ THEMES.forEach((theme) => {
   if (!['seollal', 'chuseok-premium', 'hangeul-premium', 'spring-premium'].includes(theme.id)) {
     theme.emojis = [...theme.emojis, ...themeStickerPack(theme)];
   }
+});
+
+// Two face-overlay-friendly outfits are added to every theme.  Each pair has
+// an open neckline so a photographed face can sit naturally above the sticker.
+const themeOutfitPack = (theme: Theme): string[] => {
+  const themeIndex = THEMES.findIndex(({ id }) => id === theme.id);
+  const sheet = ['outfitsA', 'outfitsB', 'outfitsC', 'outfitsD'][Math.floor(themeIndex / 8)];
+  const first = (themeIndex % 8) * 2;
+  return [`asset:${sheet}:${first}`, `asset:${sheet}:${first + 1}`];
+};
+THEMES.forEach((theme) => {
+  theme.emojis = [...theme.emojis, ...themeOutfitPack(theme)];
 });
 
 // Every original frame option remains selectable; the generated illustration

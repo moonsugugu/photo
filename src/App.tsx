@@ -42,27 +42,21 @@ const imageCache = new Map<string, HTMLImageElement>();
 const frameOverlayCache = new Map<string, HTMLCanvasElement>();
 const premiumStickerIndex = (value: string) => value.startsWith('premium:') ? Number(value.slice(8)) : null;
 const stickerSprite = (value: string) => {
-    if (value.startsWith('premium:')) return { source: PREMIUM_STICKER_SHEET, index: Number(value.slice(8)), safeCrop: false, edgeMask: false };
+    if (value.startsWith('premium:')) return { source: PREMIUM_STICKER_SHEET, index: Number(value.slice(8)), safeCrop: false };
     const match = /^asset:([a-zA-Z0-9-]+):(\d+)$/.exec(value);
     if (!match) return null;
     const source = PREMIUM_STICKER_SHEETS[match[1]];
     // Keep the full source tile. Earlier inset cropping cut off wide hats and
     // glasses, so clipping is handled by the tile boundary rather than by
     // trimming the actual sticker artwork.
-    return source ? { source, index: Number(match[2]), safeCrop: false, extraInset: false, edgeMask: true } : null;
+    return source ? { source, index: Number(match[2]), safeCrop: false, extraInset: false } : null;
 };
-const spriteStyle = (sprite: { source: string; index: number; safeCrop: boolean; extraInset?: boolean; edgeMask?: boolean }) => {
-    const inset = sprite.safeCrop ? (sprite.extraInset ? .04 : .025) : 0;
-    const windowSize = .25 - inset * 2;
-    const x = (sprite.index % 4) * .25 + inset;
-    const y = Math.floor(sprite.index / 4) * .25 + inset;
+const spriteStyle = (sprite: { source: string; index: number; safeCrop: boolean; extraInset?: boolean }) => {
     return {
       backgroundImage: `url(${sprite.source})`,
-      backgroundSize: `${100 / windowSize}% ${100 / windowSize}%`,
-      backgroundPosition: `${x / (1 - windowSize) * 100}% ${y / (1 - windowSize) * 100}%`,
-      // A thin edge mask removes sprite-sheet bleed without trimming the
-      // sticker's visible silhouette.
-      clipPath: sprite.edgeMask ? 'inset(2%)' : undefined
+      backgroundSize: '400% 400%',
+      backgroundPosition: `${(sprite.index % 4) * 100 / 3}% ${Math.floor(sprite.index / 4) * 100 / 3}%`,
+      backgroundRepeat: 'no-repeat'
     };
 };
 const cropStyle = (source: string, crop: [number, number, number, number]) => ({
@@ -675,13 +669,7 @@ export default function App() {
         if (img.complete && img.naturalHeight > 0) {
           const cellW = img.naturalWidth / 4, cellH = img.naturalHeight / 4;
           const inset = sprite.safeCrop ? cellW * (sprite.extraInset ? .16 : .1) : 0;
-          const edgeMask = sprite.edgeMask ? s.size * .02 : 0;
           ctx.save();
-          if (edgeMask) {
-            ctx.beginPath();
-            ctx.rect(-s.size / 2 + edgeMask, -s.size / 2 + edgeMask, s.size - edgeMask * 2, s.size - edgeMask * 2);
-            ctx.clip();
-          }
           ctx.drawImage(img, (sprite.index % 4) * cellW + inset, Math.floor(sprite.index / 4) * cellH + inset, cellW - inset * 2, cellH - inset * 2, -s.size / 2, -s.size / 2, s.size, s.size);
           ctx.restore();
         }
@@ -2543,7 +2531,7 @@ export default function App() {
                           className="aspect-square w-full h-full bg-white border-2 border-gray-100 rounded-xl flex items-center justify-center text-3xl hover:bg-[#FFE66D] hover:border-[#333] transition-all group overflow-hidden"
                         >
                           <span className="group-active:scale-90 transition-transform w-[80%] h-[80%] flex items-center justify-center">
-                            {stickerSprite(e) ? <span className="w-full h-full bg-contain bg-no-repeat" style={spriteStyle(stickerSprite(e)!)} /> : e.startsWith('data:image/') ? <img src={e} className="w-full h-full object-contain" alt="sticker" draggable="false" /> : e}
+                            {stickerSprite(e) ? <span className="block w-full h-full bg-contain bg-no-repeat" style={spriteStyle(stickerSprite(e)!)} /> : e.startsWith('data:image/') ? <img src={e} className="w-full h-full object-contain" alt="sticker" draggable="false" /> : e}
                           </span>
                         </button>
                       ))}
@@ -2562,7 +2550,7 @@ export default function App() {
                             className="aspect-square w-full h-full bg-white border-2 border-gray-100 rounded-xl flex items-center justify-center text-2xl hover:bg-[#FFE66D] hover:border-[#333] transition-all group overflow-hidden"
                           >
                             <span className="group-active:scale-90 transition-transform w-[80%] h-[80%] flex items-center justify-center">
-                              {stickerSprite(e) ? <span className="w-full h-full bg-contain bg-no-repeat" style={spriteStyle(stickerSprite(e)!)} /> : e.startsWith('data:image/') ? <img src={e} className="w-full h-full object-contain" alt="sticker" draggable="false" /> : e}
+                              {stickerSprite(e) ? <span className="block w-full h-full bg-contain bg-no-repeat" style={spriteStyle(stickerSprite(e)!)} /> : e.startsWith('data:image/') ? <img src={e} className="w-full h-full object-contain" alt="sticker" draggable="false" /> : e}
                             </span>
                           </button>
                         ))}
