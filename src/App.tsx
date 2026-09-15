@@ -643,8 +643,22 @@ export default function App() {
         ctx.fillText(botT, canvasWidth / 2, canvasHeight - padding - 10);
     }
 
-    // 4. Draw Stickers
+    // 4. Draw Stickers. A sticker belongs to the photo it was dropped onto.
+    // Clip only its artwork to that camera slot, while keeping editor controls
+    // visible so a partly-hidden sticker can still be selected and adjusted.
     currentStickers.forEach((s) => {
+      const stickerSlot = slots.find((slot) => (
+        s.x >= slot.x && s.x <= slot.x + slot.w &&
+        s.y >= slot.y && s.y <= slot.y + slot.h
+      ));
+
+      // Do not allow decorations to float over the frame, title, or background.
+      if (!stickerSlot) return;
+
+      ctx.save();
+      const clipInset = 5;
+      traceShape(ctx, currentFrameDesign.shape || 'rect', stickerSlot.x + clipInset, stickerSlot.y + clipInset, stickerSlot.w - clipInset * 2, stickerSlot.h - clipInset * 2);
+      ctx.clip();
       ctx.save();
       ctx.translate(s.x, s.y);
       ctx.rotate((s.rotation * Math.PI) / 180);
@@ -693,7 +707,15 @@ export default function App() {
       ctx.globalAlpha = 1;
       ctx.shadowColor = 'transparent';
 
+      // Restore both the sticker transform and the photo-slot clip before
+      // drawing selection affordances.
+      ctx.restore();
+      ctx.restore();
+
       if (s.id === currentSelectedId) {
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate((s.rotation * Math.PI) / 180);
         // Outline
         ctx.strokeStyle = '#FFFFFF';
         ctx.lineWidth = 3;
@@ -754,8 +776,8 @@ export default function App() {
         ctx.fillStyle = '#fff';
         ctx.font = '12px sans-serif';
         ctx.fillText('✕', s.size / 2 + 10, -s.size / 2 - 9);
+        ctx.restore();
       }
-      ctx.restore();
     });
     
     ctx.restore();
@@ -1562,12 +1584,39 @@ export default function App() {
     });
   };
 
+  const getDefaultStickerPosition = () => {
+    const padding = 20;
+    const footerHeight = 100;
+    const headerHeight = topText ? 80 : 0;
+    const { w, h } = canvasDim;
+
+    if (frameMode === '3-cut') {
+      const slotHeight = (h - padding * 4 - headerHeight - footerHeight) / 3;
+      return { x: w / 2, y: padding + headerHeight + slotHeight / 2 };
+    }
+
+    if (frameMode === '4-cut') {
+      const slotWidth = (w - padding * 3) / 2;
+      const slotHeight = (h - padding * 3 - headerHeight - footerHeight) / 2;
+      return {
+        x: padding + slotWidth / 2,
+        y: padding + headerHeight + slotHeight / 2,
+      };
+    }
+
+    return {
+      x: w / 2,
+      y: padding + headerHeight + (h - padding * 2 - headerHeight - footerHeight) / 2,
+    };
+  };
+
   const addSticker = (emoji: string) => {
+    const position = getDefaultStickerPosition();
     const newSticker: Sticker = {
       id: Math.random().toString(36).substr(2, 9),
       emoji,
-      x: canvasDim.w / 2,
-      y: canvasDim.h / 2,
+      x: position.x,
+      y: position.y,
       size: 150,
       rotation: 0,
     };
